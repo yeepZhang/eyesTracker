@@ -1,0 +1,7 @@
+{
+  "name": "EyeTrace Pro",
+  "description": "Real-time eye tracking application using MediaPipe Face Mesh. Detects iris position and draws movement trajectories on the video feed.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
