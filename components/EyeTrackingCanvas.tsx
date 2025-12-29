@@ -7,6 +7,15 @@ import { Point, Results } from '../types';
 const LEFT_IRIS_CENTER = 468;
 const RIGHT_IRIS_CENTER = 473;
 
+// Key feature contours for drawing the "mesh" lines
+const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10];
+const LIPS_OUTER = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61];
+const LIPS_INNER = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 78];
+const LEFT_EYE = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7, 33];
+const RIGHT_EYE = [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382, 362];
+const LEFT_EYEBROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46];
+const RIGHT_EYEBROW = [336, 296, 334, 293, 300, 276, 283, 282, 295, 285];
+
 declare global {
   interface Window {
     FaceMesh: any;
@@ -32,6 +41,24 @@ export const EyeTrackingCanvas: React.FC = () => {
     pathRef.current = [];
   };
 
+  const drawPath = (ctx: CanvasRenderingContext2D, points: any[], indices: number[], closePath = false) => {
+    if (indices.length < 2) return;
+    
+    ctx.beginPath();
+    const firstPoint = points[indices[0]];
+    ctx.moveTo(firstPoint.x * ctx.canvas.width, firstPoint.y * ctx.canvas.height);
+    
+    for (let i = 1; i < indices.length; i++) {
+        const p = points[indices[i]];
+        ctx.lineTo(p.x * ctx.canvas.width, p.y * ctx.canvas.height);
+    }
+    
+    if (closePath) {
+        ctx.closePath();
+    }
+    ctx.stroke();
+  };
+
   const onResults = useCallback((results: Results) => {
     // Calculate FPS
     const now = performance.now();
@@ -47,23 +74,62 @@ export const EyeTrackingCanvas: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Ensure canvas matches video size if results.image is available
+    // Ensure canvas matches video size
     if (results.image) {
-        const img = results.image as HTMLVideoElement | ImageBitmap;
-        if (img.width && img.height && (canvas.width !== img.width || canvas.height !== img.height)) {
-             canvas.width = img.width;
-             canvas.height = img.height;
+        let width = 0;
+        let height = 0;
+        
+        // Handle different image types
+        if ('videoWidth' in results.image) {
+             width = (results.image as HTMLVideoElement).videoWidth;
+             height = (results.image as HTMLVideoElement).videoHeight;
+        } else if ('width' in results.image) {
+             width = results.image.width;
+             height = results.image.height;
+        }
+
+        if (width && height && (canvas.width !== width || canvas.height !== height)) {
+             canvas.width = width;
+             canvas.height = height;
         }
     }
 
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
     // Draw the video frame
-    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    if (results.image instanceof ImageData) {
+        ctx.putImageData(results.image, 0, 0);
+    } else {
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    }
 
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
       const landmarks = results.multiFaceLandmarks[0];
+
+      // --- Draw Face Mesh Grid (Points) ---
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      for (const landmark of landmarks) {
+          const x = landmark.x * canvas.width;
+          const y = landmark.y * canvas.height;
+          ctx.beginPath();
+          ctx.arc(x, y, 1, 0, 2 * Math.PI);
+          ctx.fill();
+      }
+
+      // --- Draw Face Mesh Contours (Lines) ---
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 3;
       
+      drawPath(ctx, landmarks, FACE_OVAL);
+      drawPath(ctx, landmarks, LIPS_OUTER);
+      drawPath(ctx, landmarks, LIPS_INNER);
+      drawPath(ctx, landmarks, LEFT_EYE);
+      drawPath(ctx, landmarks, RIGHT_EYE);
+      drawPath(ctx, landmarks, LEFT_EYEBROW);
+      drawPath(ctx, landmarks, RIGHT_EYEBROW);
+
+      // --- Draw Iris Tracking ---
       const leftIris = landmarks[LEFT_IRIS_CENTER];
       const rightIris = landmarks[RIGHT_IRIS_CENTER];
 
@@ -78,12 +144,15 @@ export const EyeTrackingCanvas: React.FC = () => {
         pathRef.current.shift();
       }
 
+      // Draw Trajectory
       if (pathRef.current.length > 1) {
         ctx.beginPath();
         ctx.strokeStyle = '#EF4444'; // Tailwind red-500
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+        ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
+        ctx.shadowBlur = 10;
         
         ctx.moveTo(pathRef.current[0].x, pathRef.current[0].y);
         for (let i = 1; i < pathRef.current.length; i++) {
@@ -91,9 +160,11 @@ export const EyeTrackingCanvas: React.FC = () => {
             ctx.lineTo(point.x, point.y);
         }
         ctx.stroke();
+        ctx.shadowBlur = 0; // Reset shadow
       }
 
-      ctx.fillStyle = '#00FF00';
+      // Draw Iris Centers (Highlight)
+      ctx.fillStyle = '#10B981'; // Tailwind emerald-500
       const lx = leftIris.x * canvas.width;
       const ly = leftIris.y * canvas.height;
       const rx = rightIris.x * canvas.width;
@@ -216,12 +287,9 @@ export const EyeTrackingCanvas: React.FC = () => {
       }
     };
 
-    // Give a small delay to ensure script tag is loaded if it's async (though it's in head so should be fine)
-    // But since it's a React effect, the DOM is ready.
     if (window.FaceMesh) {
         initMediaPipe();
     } else {
-        // Fallback or retry if script loading is delayed (unlikely with sync script tag)
         const checkInterval = setInterval(() => {
             if (window.FaceMesh) {
                 clearInterval(checkInterval);
